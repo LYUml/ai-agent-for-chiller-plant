@@ -57,3 +57,33 @@ The simulator updates its own telemetry when it accepts a command. Live equipmen
 ## Upstream references
 
 The WhatsApp adapter uses the client, local authentication, and message events from [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js). The approval flow draws on [LangGraph's human-review examples](https://docs.langchain.com/oss/python/langgraph/interrupts) and stores pending operations directly in SQLite.
+
+## Single-account confirmation test
+
+Run `WA_SELF_TEST=1 TEST_GROUP_NAME=aafcp-testing WA_SHOW_BROWSER=1 npm start`.
+From the linked account, send `/test 启动 2 号机` in the test group. Select
+`确认操作` (confirm) or `取消操作` (cancel) on the poll. New proposals
+expire after ten minutes. The demo reads current poll selections roughly
+every five seconds and processes each poll once. Withdrawing a selection
+after the bot has processed it does not reverse the outcome. To confirm
+by text, send `/test 确认 Sxxxxxxxx` with the actual operation ID.
+
+## Evaluate intent recognition
+
+With Node 24+, a local DeepSeek key in the environment, and the project dependencies installed:
+
+```sh
+npm run regression
+npx --yes promptfoo@0.126.0 eval -c eval/promptfooconfig.cjs --env-file .env --no-cache --no-share
+python3 -m venv /tmp/chiller-evals
+/tmp/chiller-evals/bin/pip install -r eval/requirements.txt
+/tmp/chiller-evals/bin/python eval/trace_eval.py
+/tmp/chiller-evals/bin/python eval/trace_eval.py --holdout
+```
+
+The suites use synthetic utterances. DSPy compares the production classifier's
+intent and equipment number with the labels. Langfuse SDK observations are
+exported to memory for local verification. The WhatsApp process does not export
+chat messages to Langfuse. The language glossary and clarification cues live in
+`kb/language.json`. Confirm equipment mappings against the site point list before
+extending control beyond the simulator.

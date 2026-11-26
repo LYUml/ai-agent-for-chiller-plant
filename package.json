@@ -4,8 +4,10 @@
   "description": "",
   "scripts": {
     "test": "node --test",
-    "start": "node src/whatsapp.js",
-    "demo": "node src/demo.js"
+    "start": "node --env-file-if-exists=.env src/whatsapp.js",
+    "demo": "node src/demo.js",
+    "understand": "node --env-file-if-exists=.env src/understand.js",
+    "regression": "npm test && npm run understand -- --repeat"
   },
   "keywords": [],
   "author": "",

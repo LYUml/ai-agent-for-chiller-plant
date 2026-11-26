@@ -9,12 +9,15 @@ export function createPlant(path = ':memory:') {
     CREATE TABLE IF NOT EXISTS points(unit INTEGER PRIMARY KEY, running INTEGER, sampled TEXT);
     CREATE TABLE IF NOT EXISTS commands(op TEXT PRIMARY KEY, submitted TEXT);
     INSERT OR IGNORE INTO points VALUES(2,0,CURRENT_TIMESTAMP),(3,0,CURRENT_TIMESTAMP);`);
+  if (!db.prepare('PRAGMA table_info(ops)').all().some(column => column.name === 'expires')) {
+    db.exec('ALTER TABLE ops ADD COLUMN expires INTEGER');
+  }
   const run = (sql,...args) => db.prepare(sql).run(...args);
   const get = (sql,...args) => db.prepare(sql).get(...args);
   function draft(unit,action,reason) {
     const id = 'S'+randomUUID().slice(0,8);
-    run("INSERT INTO ops VALUES(?,?,?,'待确认',?)",id,unit,action,reason);
-    return `[模拟 ${id}] ${action} ${unit} 号机。依据：${reason}。回复「确认 ${id}」，或引用本消息拒绝、修改、追问。`;
+    run("INSERT INTO ops(id,unit,action,status,reason,expires) VALUES(?,?,?,'待确认',?,unixepoch()+600)",id,unit,action,reason);
+    return `[模拟 · 操作编号：${id}] ${action} ${unit} 号机。依据：${reason}。请在 10 分钟内确认。回复「确认 ${id}」，或引用本消息拒绝、修改、追问。`;
   }
   function strategy() {
     const p=get('SELECT * FROM points WHERE unit=2');
@@ -41,6 +44,10 @@ export function createPlant(path = ':memory:') {
     if(!operator) return '仅指定操作员可处理此操作。';
     if(op.status!=='待确认' && op.status!=='暂缓') return op.id+' 当前状态：'+op.status;
     const status=s=>run('UPDATE ops SET status=? WHERE id=?',s,op.id);
+    if (!op.expires || op.expires <= Date.now()/1000) {
+      status('已过期');
+      return '操作编号 '+op.id+' 已过期，请重新发起操作。';
+    }
     if(/^(暂缓|先别)/.test(body)) {status('暂缓');return '已暂缓 '+op.id+(/为什么/.test(body)?'。记录依据：'+op.reason:'');}
     if(body==='拒绝') {status('已拒绝');return '已拒绝 '+op.id;}
     if(/^(修改为|改成)\s*[23]\s*号机$/.test(body)) {status('已替换');return draft(+unit[1],op.action,'工程师修改了待确认操作的目标设备');}
@@ -55,12 +62,25 @@ export function createPlant(path = ':memory:') {
     return op.id+' 模拟后台已接收；模拟点位回读：'+op.unit+' 号机'+(get('SELECT running FROM points WHERE unit=?',op.unit).running?'运行':'停机')+'。';
   }
   db.exec('CREATE TABLE IF NOT EXISTS feedback(message TEXT PRIMARY KEY, content TEXT)');
-  return {strategy,handle(m){
+  db.exec('CREATE TABLE IF NOT EXISTS polls(message TEXT PRIMARY KEY, op TEXT NOT NULL)');
+  db.exec('CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY, body TEXT NOT NULL)');
+  return {strategy,
+    pendingReplies(){return db.prepare('SELECT id, body FROM outbox ORDER BY rowid').all();},
+    markReplySent(id){run('DELETE FROM outbox WHERE id=?',id);},
+    pendingPolls(){return db.prepare("SELECT message FROM polls JOIN ops ON polls.op=ops.id WHERE status IN ('待确认','暂缓') AND expires > unixepoch()").all();},
+    bindPoll(message,op){run('INSERT INTO polls VALUES(?,?)',message,op);},
+    vote(message,choice){
+      const poll=get('SELECT op FROM polls WHERE message=?',message);
+      if(!poll || !['确认','拒绝'].includes(choice)) return null;
+      return this.handle({id:'poll:'+message,text:choice+' '+poll.op,operator:true},'收到投票「'+(choice==='确认'?'确认操作':'取消操作')+'」。');
+    },
+    handle(m, replyPrefix){
     db.exec('BEGIN IMMEDIATE');
     try {
       const fresh=run('INSERT OR IGNORE INTO messages VALUES(?)',m.id).changes;
       const reply=fresh?route(m):null;
       if(fresh && m.text.startsWith('已经手动')) run('INSERT INTO feedback VALUES(?,?)',m.id,m.text+' '+(m.quoted||''));
+      if(reply && replyPrefix) run('INSERT INTO outbox VALUES(?,?)',m.id,replyPrefix+reply);
       db.exec('COMMIT');return reply;
     } catch(e){db.exec('ROLLBACK');throw e;}
   }};

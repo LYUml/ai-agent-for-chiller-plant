@@ -1,0 +1,12 @@
+[
+ ["帮忙查下 CH2 有冇行緊","status",2],
+ ["麻煩幫我開三號機","start",3],
+ ["請停止 WCC2","stop",2],
+ ["CT3 風扇可以停嗎","ignore",null],
+ ["幫我開 CWP2","ignore",null],
+ ["今日飯堂有咩食","ignore",null],
+ ["幫我查下二號機，唔好開佢","status",2],
+ ["師傅話佢已經停咗四號機","feedback",4],
+ ["現在有無需要加機","need",null],
+ ["我確認開二號機","ignore",null]
+]
