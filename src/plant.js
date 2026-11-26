@@ -11,6 +11,7 @@ export function modeRequest(text){
 // Single test group per database. Every reply and simulated write is transactional.
 export function createPlant(path = ':memory:') {
   const db = new DatabaseSync(path);
+  db.exec('PRAGMA busy_timeout=5000');
   db.exec(`CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS ops(id TEXT PRIMARY KEY, unit INTEGER, action TEXT, status TEXT, reason TEXT);
     CREATE TABLE IF NOT EXISTS points(unit INTEGER PRIMARY KEY, running INTEGER, sampled TEXT);
@@ -19,12 +20,15 @@ export function createPlant(path = ':memory:') {
   if (!db.prepare('PRAGMA table_info(ops)').all().some(column => column.name === 'expires')) {
     db.exec('ALTER TABLE ops ADD COLUMN expires INTEGER');
   }
+  if (!db.prepare('PRAGMA table_info(ops)').all().some(column => column.name === 'source_strategy')) {
+    db.exec('ALTER TABLE ops ADD COLUMN source_strategy TEXT');
+  }
   const run = (sql,...args) => db.prepare(sql).run(...args);
   const get = (sql,...args) => db.prepare(sql).get(...args);
-  function draft(unit,action,reason) {
+  function draft(unit,action,reason,deadline=null,source=null) {
     const id = 'S'+randomUUID().slice(0,8);
-    run("INSERT INTO ops(id,unit,action,status,reason,expires) VALUES(?,?,?,'待确认',?,unixepoch()+600)",id,unit,action,reason);
-    return `[模拟 · 操作编号：${id}] ${action} ${unit} 号机。依据：${reason}。请在 10 分钟内确认。回复「确认 ${id}」，或引用本消息拒绝、修改、追问。`;
+    run("INSERT INTO ops(id,unit,action,status,reason,expires,source_strategy) VALUES(?,?,?,'待确认',?,min(unixepoch()+600,coalesce(?,unixepoch()+600)),?)",id,unit,action,reason,deadline,source);
+    return `[模拟 · 操作编号：${id}] ${action} ${unit} 号机。依据：${reason}。${deadline ? "最迟于 "+new Date(Math.min(deadline*1000,Date.now()+600000)).toISOString()+" 确认。" : "请在 10 分钟内确认。"}回复「确认 ${id}」，或引用本消息拒绝、修改、追问。`;
   }
   db.exec("CREATE TABLE IF NOT EXISTS mode_setting(id INTEGER PRIMARY KEY, mode TEXT, revision INTEGER); INSERT OR IGNORE INTO mode_setting VALUES(1,'手动批准',0); CREATE TABLE IF NOT EXISTS mode_poll(message TEXT PRIMARY KEY, revision INTEGER, expires INTEGER)");
   const setting=()=>get('SELECT mode,revision FROM mode_setting WHERE id=1');
@@ -39,12 +43,12 @@ export function createPlant(path = ':memory:') {
       return result;
     }catch(error){db.exec('ROLLBACK');throw error;}
   }
-  function newStrategy(unit) {
+  function newStrategy(unit,action='启动',reason='样例预测显示下一小时负荷上升，当前 '+unit+' 号机停机', deadline=null, source=null) {
     const p=get('SELECT * FROM points WHERE unit=?',unit);
-    if(p.running) return '模拟策略检查：'+unit+' 号机已运行，无需启动。';
+    if(p.running===Number(action==='启动')) return '模拟策略检查：'+unit+' 号机已达目标，无需'+action+'。';
     const {mode}=setting();
-    const proposal=draft(unit,'启动','样例预测显示下一小时负荷上升，当前 '+unit+' 号机停机');
-    if(mode==='手动批准' || (mode==='自动批准' && unit!==2)) return proposal+' 策略模式：'+mode;
+    const proposal=draft(unit,action,reason,deadline,source);
+    if(mode==='手动批准' || (mode==='自动批准' && (unit!==2 || action!=='启动'))) return proposal+' 策略模式：'+mode;
     const id=proposal.match(/S[0-9a-f]{8}/)[0];
     return '模拟策略（'+mode+'）：'+route({text:'确认 '+id,operator:true});
 
@@ -68,9 +72,10 @@ export function createPlant(path = ':memory:') {
       run('UPDATE mode_setting SET mode=?, revision=revision+1 WHERE id=1',request);
       return '模式更改已生效。当前策略模式：'+request+'。';
     }
-    const ids=[...new Set((t+' '+quoted).match(/S[0-9a-f]{8}\b/g)||[])];
+    const references=(t+' '+quoted).match(/S[0-9a-f]{8}\b/gi) ?? [];
+    const ids=[...new Set(references.map(id=>'S'+id.slice(1).toLowerCase()))];
     const op=ids.length===1 && get('SELECT * FROM ops WHERE id=?',ids[0]);
-    const body=t.replace(/S[0-9a-f]{8}\b/g,'').trim();
+    const body=t.replace(/S[0-9a-f]{8}\b/gi,'').trim();
     const unit=body.match(/([23])\s*号机/);
     if (/^(查询|状态|现在|.*开了吗)/.test(body) && unit) {
       const p=get('SELECT * FROM points WHERE unit=?',+unit[1]);
@@ -82,7 +87,7 @@ export function createPlant(path = ':memory:') {
     if(!/^(确认|拒绝|修改|改成|为什么|暂缓|先别|已经手动|收到|可以)/.test(body)) return null;
     if(body==='收到') return null;
     if(!op) return '请引用对应操作消息或附上唯一操作编号。';
-    if(body.startsWith('为什么')) return op.id+' 的记录依据：'+op.reason;
+    if(body.startsWith('为什么')) return op.id+' 的记录依据：'+op.reason+(op.source_strategy?'（来源策略：'+op.source_strategy+'）':'');
     if(!operator) return '仅指定操作员可处理此操作。';
     if(op.status!=='待确认' && op.status!=='暂缓') return op.id+' 当前状态：'+op.status;
     const status=s=>run('UPDATE ops SET status=? WHERE id=?',s,op.id);
@@ -92,7 +97,7 @@ export function createPlant(path = ':memory:') {
     }
     if(/^(暂缓|先别)/.test(body)) {status('暂缓');return '已暂缓 '+op.id+(/为什么/.test(body)?'。记录依据：'+op.reason:'');}
     if(body==='拒绝') {status('已拒绝');return '已拒绝 '+op.id;}
-    if(/^(修改为|改成)\s*[23]\s*号机$/.test(body)) {status('已替换');return draft(+unit[1],op.action,'工程师修改了待确认操作的目标设备');}
+    if(/^(修改为|改成)\s*[23]\s*号机$/.test(body)) {status('已替换');return draft(+unit[1],op.action,'工程师修改了待确认操作的目标设备',op.expires,op.source_strategy);}
     const p=get('SELECT * FROM points WHERE unit=?',op.unit);
     if(body.startsWith('已经手动')) {status('暂缓');return '已暂缓并记录现场反馈；模拟点位显示'+(p.running?'运行':'停机')+'，请核对。';}
     if(body!=='确认') return '请明确回复「确认 '+op.id+'」、拒绝、暂缓或改成 3 号机。';
@@ -125,7 +130,35 @@ export function createPlant(path = ':memory:') {
       return run('DELETE FROM clarifications WHERE sender=? AND prompt=?',sender,prompt).changes===1;
     }
   };
-  return {strategy,setting,clarifications,
+  db.exec('CREATE TABLE IF NOT EXISTS strategy_input(id TEXT PRIMARY KEY, payload TEXT NOT NULL)');
+  function submitStrategy({id,unit,action,reason,expiresAt}){
+    const deadline=Date.parse(expiresAt);
+    if(typeof id!=='string' || !/^[A-Za-z0-9_-]{1,80}$/.test(id) ||
+       ![2,3].includes(unit) || !['启动','停止'].includes(action) ||
+       typeof reason!=='string' || !reason.trim() || reason.length>1000 || !Number.isFinite(deadline))
+      throw Error('Invalid strategy: expected id, unit, action, reason and expiresAt');
+    const payload=JSON.stringify([unit,action,reason,deadline]);
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      const prior=get('SELECT payload FROM strategy_input WHERE id=?',id);
+      if(prior && prior.payload!==payload) throw Error('Strategy ID already used with different data');
+      if(!prior){
+        if(deadline<=Date.now()) throw Error('Strategy expired');
+        run('INSERT INTO strategy_input VALUES(?,?)',id,payload);
+        const result=newStrategy(unit,action,reason,Math.floor(deadline/1000),id);
+        run('INSERT INTO outbox VALUES(?,?)','strategy:'+id,result);
+      }
+      db.exec('COMMIT');
+      return prior?'duplicate':'accepted';
+    }catch(error){db.exec('ROLLBACK');throw error;}
+  }
+  function proposalState(id){
+    const op=get('SELECT status,expires FROM ops WHERE id=?',id);
+    if(!op) return '未知';
+    if(op.status==='待确认' && op.expires*1000<=Date.now()) return '已过期';
+    return op.status;
+  }
+  return {strategy,submitStrategy,setting,clarifications,proposalState,
     restoreFirstSoloModeVote(){
       const state=setting();
       const records=db.prepare("SELECT substr(id,6) AS message FROM messages WHERE id LIKE 'mode:%'").all();

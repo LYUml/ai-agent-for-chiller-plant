@@ -125,3 +125,41 @@ test('投票发送失败可使用原编号确认，回执重送不重复发令',
   assert.equal(confirm(),null);
   assert.match(p.handle({id:'stats',text:'报告'}),/命令 1 条/);
 });
+
+test('后台策略提交保留依据和有效期，重试不重复创建或自动执行',()=>{
+  const p=createPlant();
+  const input={id:'seq-1',unit:2,action:'启动',reason:'测试负荷预测',expiresAt:new Date(Date.now()+60000).toISOString()};
+  assert.equal(p.submitStrategy(input),'accepted');
+  assert.equal(p.submitStrategy(input),'duplicate');
+  assert.throws(()=>p.submitStrategy({...input,unit:3}),/different data/);
+  assert.throws(()=>p.submitStrategy({...input,id:'stale',expiresAt:'2000-01-01'}),/expired/);
+  const [proposal]=p.pendingReplies();
+  assert.match(proposal.body,/测试负荷预测/);
+  p.handle({id:'mode',text:'改成完全权限',operator:true});
+  assert.equal(p.submitStrategy(input),'duplicate');
+  assert.match(p.handle({id:'report1',text:'报告'}),/命令 0 条/);
+  assert.equal(p.submitStrategy({...input,id:'seq-2'}),'accepted');
+  assert.match(p.handle({id:'report2',text:'报告'}),/命令 1 条/);
+});
+
+test('策略等待发送期间过期时只发送状态，不创建投票',async t=>{
+  const {deliverReply}=await import('../src/outbox.js');
+  const plant=createPlant();
+  const reply=plant.strategy();
+  const future=Date.now()+601000;
+  t.mock.method(Date,'now',()=>future);
+  const sent=[];
+  await deliverReply(plant,reply,async body=>sent.push(body),()=>assert.fail('expired poll'));
+  assert.equal(sent.length,1);
+  assert.match(sent[0],/当前状态：已过期/);
+});
+
+test('后台策略下发后，原提议及人工修改都可追踪来源',()=>{
+  const plant=createPlant();
+  plant.submitStrategy({id:'load-forecast-42',unit:2,action:'启动',reason:'样例预测',expiresAt:new Date(Date.now()+60000).toISOString()});
+  const proposal=plant.pendingReplies()[0].body;
+  const reason=plant.handle({id:'why',text:'为什么',quoted:proposal});
+  assert.match(reason,/样例预测.*来源策略：load-forecast-42/);
+  const revised=plant.handle({id:'change',text:'改成 3 号机',quoted:proposal,operator:true});
+  assert.match(plant.handle({id:'why2',text:'为什么',quoted:revised}),/工程师修改.*来源策略：load-forecast-42/);
+});

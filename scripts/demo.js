@@ -1,4 +1,4 @@
-import {createPlant} from './plant.js';
+import {createPlant} from '../src/plant.js';
 const plant=createPlant();
 const strategy=plant.strategy();
 console.log(strategy);

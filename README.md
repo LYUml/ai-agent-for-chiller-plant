@@ -45,7 +45,9 @@ Use `暂缓` to hold a proposal or `拒绝` to reject it. To confirm without quo
 | [src/whatsapp.js](src/whatsapp.js) | QR login, group selection, sender identification, quoted replies, and strategy delivery |
 | [src/incoming.js](src/incoming.js) | Shared chat handler used by WhatsApp and the offline group-message replay |
 | [src/plant.js](src/plant.js) | Phrase matching, approval state, duplicate-message handling, simulated commands, and telemetry |
-| [src/demo.js](src/demo.js) | Local replay using the same plant logic as the WhatsApp adapter |
+| [scripts/demo.js](scripts/demo.js) | Local replay using the same plant logic as the WhatsApp adapter |
+| [scripts](scripts) | CLI tools for strategy submission, demo replay, and language checks |
+| [kb](kb) and [eval](eval) | Plant vocabulary, synthetic language cases, and evaluation tools |
 | [test/plant.test.js](test/plant.test.js) | Checks for ambiguous confirmations, revisions, operator permissions, duplicate delivery, and state readback |
 | [docs/design](docs/design) and [docs/reference](docs/reference) | Interaction flowchart and original project materials |
 
@@ -78,3 +80,23 @@ Send `改模式` to open the mode picker, `改到自动批准` to select a mode 
 - [Intent evaluation](eval/README.md) — Promptfoo, DSPy, and local Langfuse traces
 - [Language glossary](kb/language.json) — equipment terminology and clarification cues
 - [Tests](test/) — approval, expiry, outbox recovery, mentions, and clarification
+
+## Submit a strategy from a local backend
+
+After the simulator has initialized a test group, a trusted local process can
+submit one JSON object on stdin. Set `TEST_GROUP_ID` to the same group used by
+the WhatsApp adapter. The following example generates a proposal valid for
+five minutes. Save the payload and reuse it unchanged when retrying.
+
+```sh
+node -e "console.log(JSON.stringify({id:crypto.randomUUID(),unit:2,action:'启动',reason:'Simulated load forecast',expiresAt:new Date(Date.now()+300000).toISOString()}))" > /tmp/chiller-proposal.json
+npm run strategy:submit < /tmp/chiller-proposal.json
+```
+
+The producer records the strategy and its outbound notification in the group
+database. The running adapter picks up the notification on its next poll cycle.
+The group approval mode at submission determines whether a simulated command
+requires confirmation. Supported actions are `启动` and `停止` on units 2 and 3.
+Only starting unit 2 qualifies for the demo auto-approval rule. A duplicate ID
+with different data is rejected. Submission requires local filesystem access
+to the simulator database.

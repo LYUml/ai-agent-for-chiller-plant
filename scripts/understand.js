@@ -1,4 +1,4 @@
-import {classify} from './ai.js';
+import {classify} from '../src/ai.js';
 const examples=[
   ['有冇需要加機？','need',null],
   ['可唔可以幫手開四號機？','start',4],

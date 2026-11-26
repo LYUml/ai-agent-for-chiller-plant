@@ -6,7 +6,7 @@ function pendingFollowup(text) {
   const hold = /先别(?:开|执行|操作)|暫緩|暂缓|先唔好(?:開|執行)/u.test(text);
   const reason = /为什么|為什麼|点解|點解/u.test(text);
   if (!hold || !reason) return text;
-  return ['暂缓，为什么', ...(text.match(/S[0-9a-f]{8}\b/g) ?? [])].join(' ');
+  return ['暂缓，为什么', ...(text.match(/S[0-9a-f]{8}\b/gi) ?? [])].join(' ');
 }
 
 function isDirectInput(text) {
@@ -39,6 +39,7 @@ export async function handleIncoming(m,{plant,group,solo,selfIds,operators,aiEna
       if(result) await deliver(result);
       return;
     }
+    const originalText=text;
     if(!request && aiEnabled && !isDirectInput(text.trim())){
       try {
         text=await interpret(text);
@@ -52,8 +53,12 @@ export async function handleIncoming(m,{plant,group,solo,selfIds,operators,aiEna
         return;
       }
     }
+    if(text==='为什么'){
+      const ids=originalText.match(/S[0-9a-f]{8}\b/gi) ?? [];
+      text=['为什么',...ids].join(' ');
+    }
     const observation=typeof text==='object'?text:null;
-    const reply=plant.handle({id:m.id._serialized,text:observation?.original ?? text,observation,quoted:q?.fromMe?q.body:'',operator:solo || operators.has(m.author)});
+    const reply=plant.handle({id:m.id._serialized,text:observation?.original ?? text,observation,quoted:q?.fromMe?(q.pollName || q.body || ''):'',operator:solo || operators.has(m.author)});
     if(reply) await deliver(reply);
   }catch(e){console.error('消息处理失败',e.message);}
 }

@@ -86,3 +86,19 @@ test('礼貌询问进入分类器；先问原因再暂缓时保留引用和两�
   assert.match(replies[1],/已暂缓.*记录依据/);
   assert.match(plant.handle({id:'counts',text:'报告'}),/命令 0 条/);
 });
+
+test('粤语追问保留操作编号，引用另一张投票时先澄清',async()=>{
+  const plant=createPlant(), replies=[];
+  const a=plant.strategy().match(/S[0-9a-f]{8}/)[0];
+  const b=plant.strategy(3).match(/S[0-9a-f]{8}/)[0];
+  const ctx={plant,group:'g',solo:true,operators:new Set(),aiEnabled:true,
+    interpret:async()=> '为什么',deliver:r=>replies.push(r)};
+  const msg={type:'chat',fromMe:true,to:'g',body:a.toLowerCase()+' 點解要咁做？',id:{_serialized:'why'}};
+  await handleIncoming(msg,ctx);
+  assert.ok(replies[0].startsWith(a+' 的记录依据'));
+  const quote={hasQuotedMsg:true,getQuotedMessage:async()=>({fromMe:true,type:'poll_creation',body:'',pollName:'操作编号：'+b})};
+  await handleIncoming({...msg,...quote,id:{_serialized:'conflict'}},ctx);
+  assert.match(replies[1],/唯一操作编号/);
+  await handleIncoming({...msg,...quote,body:'點解？',id:{_serialized:'poll-why'}},ctx);
+  assert.ok(replies[2].startsWith(b+' 的记录依据'));
+});

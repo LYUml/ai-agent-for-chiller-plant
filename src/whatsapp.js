@@ -126,7 +126,7 @@ async function reconcilePolls(){
       }
     }
   }catch(e){console.error('读取当前投票失败',String(e));}
-  await flushReplies(plant, body=>sendGroup(body));
+  await flushReplies(plant, (body,id)=>id.startsWith('strategy:')?deliver(body):sendGroup(body));
   setTimeout(reconcilePolls,5000);
 }
 let stopping=false;

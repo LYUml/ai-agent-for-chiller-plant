@@ -5,9 +5,10 @@
   "scripts": {
     "test": "node --test",
     "start": "node --env-file-if-exists=.env src/whatsapp.js",
-    "demo": "node src/demo.js",
-    "understand": "node --env-file-if-exists=.env src/understand.js",
-    "regression": "npm test && npm run understand -- --repeat"
+    "demo": "node scripts/demo.js",
+    "understand": "node --env-file-if-exists=.env scripts/understand.js",
+    "regression": "npm test && npm run understand -- --repeat",
+    "strategy:submit": "node --env-file-if-exists=.env scripts/submit-strategy.js"
   },
   "keywords": [],
   "author": "",
