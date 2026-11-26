@@ -1,6 +1,6 @@
 # WhatsApp Chiller Plant Demo
 
-A WhatsApp test group can review operating recommendations, issue commands, and query two simulated chillers (units 2 and 3). An authorized operator must confirm a specific operation before the simulator changes equipment state. The demo recognizes predefined Chinese phrases and requires no model API key.
+A WhatsApp test group can review operating recommendations, issue commands, and query two simulated chillers (units 2 and 3). Direct commands require operator confirmation. Strategies follow the group approval mode. Set DEEPSEEK_API_KEY in a local .env file to enable natural-language requests; the offline replay works without a key.
 
 ## Run the local demo
 
@@ -17,7 +17,7 @@ The replay uses an in-memory SQLite database. It walks through a recommendation,
 ## Connect a WhatsApp test group
 
 1. Run `npm start`. In WhatsApp on the test account, open **Linked devices** and scan the terminal QR code. The terminal lists the groups visible to that account. Copy the ID of the intended test group.
-2. Stop the process, then run `TEST_GROUP_ID='YOUR_GROUP_ID@g.us' npm start` with the actual group ID. From a second account, send a message in that group. Copy the sender ID printed in the terminal.
+2. Stop the process, then run `TEST_GROUP_ID='YOUR_GROUP_ID@g.us' npm start` with the actual group ID. From a second account, mention the linked account in a message in that group. Copy the sender ID printed in the terminal.
 3. Stop the process and restart with the sender authorized as an operator:
 
    ```sh
@@ -28,7 +28,7 @@ For multiple operators, separate the exact sender IDs with commas. On macOS, the
 
 ## Try the three interactions
 
-The Chinese examples below are literal inputs. Send chat messages from the second account.
+The Chinese examples below are literal inputs. In multi-account mode, mention the bot using the WhatsApp member picker when sending the examples below, including quoted text replies.
 
 | Interaction | What to do | Expected result |
 | --- | --- | --- |
@@ -50,9 +50,9 @@ Use `暂缓` to hold a proposal or `拒绝` to reject it. To confirm without quo
 
 ## Persistence and integration scope
 
-Group mode persists simulated plant records in a per-group SQLite database under `data/`. The WhatsApp session persists under `.wwebjs_auth/`. Restart the process after a disconnect. Offline message recovery and failed-send retries are not implemented.
+Group mode persists simulated plant records in a per-group SQLite database under `data/`. The WhatsApp session persists under `.wwebjs_auth/`. Restart the process after a disconnect. Poll decisions and their outgoing acknowledgements are stored together so an interrupted acknowledgement can be retried. Offline chat messages are not replayed.
 
-The simulator updates its own telemetry when it accepts a command. Live equipment control, InfluxDB readback, and open-ended language understanding are future integration points.
+The simulator updates its own telemetry when it accepts a command. Live equipment control and InfluxDB readback are future integration points.
 
 ## Upstream references
 
@@ -61,29 +61,19 @@ The WhatsApp adapter uses the client, local authentication, and message events f
 ## Single-account confirmation test
 
 Run `WA_SELF_TEST=1 TEST_GROUP_NAME=aafcp-testing WA_SHOW_BROWSER=1 npm start`.
-From the linked account, send `/test 启动 2 号机` in the test group. Select
+From the linked account, send `启动 2 号机` in the test group. Select
 `确认操作` (confirm) or `取消操作` (cancel) on the poll. New proposals
 expire after ten minutes. The demo reads current poll selections roughly
 every five seconds and processes each poll once. Withdrawing a selection
 after the bot has processed it does not reverse the outcome. To confirm
-by text, send `/test 确认 Sxxxxxxxx` with the actual operation ID.
+by text, send `确认 Sxxxxxxxx` with the actual operation ID.
 
-## Evaluate intent recognition
+## Strategy approval modes
 
-With Node 24+, a local DeepSeek key in the environment, and the project dependencies installed:
+Send `改模式` to open the mode picker, `改到自动批准` to select a mode directly, or `当前模式` to check it. The default is **手动批准** (confirm each proposal). **自动批准** automatically approves the demo rule for starting unit 2. **完全权限** automatically approves supported simulated strategies. Each change applies to future strategies in that group. An unanswered mode picker closes after ten minutes.
 
-```sh
-npm run regression
-npx --yes promptfoo@0.126.0 eval -c eval/promptfooconfig.cjs --env-file .env --no-cache --no-share
-python3 -m venv /tmp/chiller-evals
-/tmp/chiller-evals/bin/pip install -r eval/requirements.txt
-/tmp/chiller-evals/bin/python eval/trace_eval.py
-/tmp/chiller-evals/bin/python eval/trace_eval.py --holdout
-```
+## Development resources
 
-The suites use synthetic utterances. DSPy compares the production classifier's
-intent and equipment number with the labels. Langfuse SDK observations are
-exported to memory for local verification. The WhatsApp process does not export
-chat messages to Langfuse. The language glossary and clarification cues live in
-`kb/language.json`. Confirm equipment mappings against the site point list before
-extending control beyond the simulator.
+- [Intent evaluation](eval/README.md) — Promptfoo, DSPy, and local Langfuse traces
+- [Language glossary](kb/language.json) — equipment terminology and clarification cues
+- [Tests](test/) — approval, expiry, outbox recovery, mentions, and clarification

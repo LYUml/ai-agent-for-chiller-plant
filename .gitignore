@@ -4,3 +4,7 @@ node_modules/
 data/
 .env
 .DS_Store
+WhatsApp Chat*/
+__pycache__/
+.venv/
+.promptfoo/
