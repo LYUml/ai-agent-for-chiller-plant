@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createPlant} from '../src/plant.js';
+test('同群两条建议、修改、权限、重复投递和点位回读',()=>{
+ const plant=createPlant(), a=plant.strategy();
+ let i=0;
+ const send=(text,quoted='',operator=true,id=String(++i))=>plant.handle({text,quoted,operator,id});
+ const b=send('启动 3 号机');
+ assert.match(send('确认'),/唯一/);
+ assert.match(send('确认',a+b),/唯一/);
+ assert.equal(send('午饭到了'),null);
+ assert.match(send('先别开，为什么',a),/已暂缓.*负荷/);
+ const c=send('改成 3 号机',a);
+ assert.match(send('确认',a),/已替换/);
+ assert.match(send('确认',c,false),/仅指定/);
+ assert.match(send('确认',c,true,'retry'),/模拟后台已接收/);
+ assert.equal(send('确认',c,true,'retry'),null);
+ assert.match(send('查询 3 号机'),/运行/);
+ assert.match(send('拒绝',b),/已拒绝/);
+ assert.match(send('报告'),/命令 1 条/);
+});
