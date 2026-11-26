@@ -1,19 +1,59 @@
-# 冷站 WhatsApp 测试群 Demo
-Node.js 24+，SQLite 模拟策略记录、控制回执和设备点位。资料在 docs/reference，流程图在 docs/design。src/plant.js 管理对话与模拟设备；src/whatsapp.js 对接群聊。首版使用明确短语和引用解析，不需要模型密钥。
+# WhatsApp Chiller Plant Demo
 
-## 本地回放
-运行 npm ci、npm test 和 npm run demo。回放使用内存数据库，不连接 WhatsApp。
+A WhatsApp test group can review operating recommendations, issue commands, and query two simulated chillers (units 2 and 3). An authorized operator must confirm a specific operation before the simulator changes equipment state. The demo recognizes predefined Chinese phrases and requires no model API key.
 
-## 测试群
-1. npm start，使用专用测试账号在 WhatsApp 的关联设备中扫码。默认只在终端列出可见群和 ID。
-2. 设置 TEST_GROUP_ID 后重启，让工程师在测试群发一条普通消息。从终端取得发送人 ID。无需授权操作员即可发现 ID。
-3. 重新启动，例如：
+## Run the local demo
+
+Install Node.js 24 or later, then run the following commands from the repository root:
+
 ```sh
-TEST_GROUP_ID='实际群ID@g.us' OPERATOR_IDS='实际发送人ID' npm start
+npm ci
+npm test
+npm run demo
 ```
-多位操作员用逗号分隔。从另一账号发测试消息。macOS 默认尝试系统 Chrome，其他环境可设置 CHROME_PATH 为 Chrome 可执行文件路径。
-4. 程序终端输入 strategy，向指定群推送模拟建议。在群内引用建议回复「为什么」「暂缓」「拒绝」「改成 3 号机」或「确认」。也可输入「确认 Sxxxxxxxx」，以真实编号替换。另可独立发送「启动 2 号机」「停止 3 号机」「查询 2 号机」「报告」。仅支持 2、3 号模拟冷机。
-5. 重启保留会话和模拟记录。断线需重启，尚未实现离线消息补拉或发送失败补偿。设备读数随模拟命令同步更新。报告为当前快照与命令计数。
 
-## 上游参考
-WhatsApp 接入直接使用 [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) 的 Client、LocalAuth、二维码登录和消息事件。审批流程借鉴 [LangGraph 人工审核示例](https://docs.langchain.com/oss/python/langgraph/interrupts)，此版由 SQLite 保存操作状态。真实控制、InfluxDB 与开放式语言理解属于后续对接。
+The replay uses an in-memory SQLite database. It walks through a recommendation, a request for its rationale, a change of target, operator confirmation, and a status report. It runs offline after dependency installation.
+
+## Connect a WhatsApp test group
+
+1. Run `npm start`. In WhatsApp on the test account, open **Linked devices** and scan the terminal QR code. The terminal lists the groups visible to that account. Copy the ID of the intended test group.
+2. Stop the process, then run `TEST_GROUP_ID='YOUR_GROUP_ID@g.us' npm start` with the actual group ID. From a second account, send a message in that group. Copy the sender ID printed in the terminal.
+3. Stop the process and restart with the sender authorized as an operator:
+
+   ```sh
+   TEST_GROUP_ID='YOUR_GROUP_ID@g.us' OPERATOR_IDS='YOUR_SENDER_ID' npm start
+   ```
+
+For multiple operators, separate the exact sender IDs with commas. On macOS, the adapter tries the standard Google Chrome installation. Set `CHROME_PATH` to select a different browser executable.
+
+## Try the three interactions
+
+The Chinese examples below are literal inputs. Send chat messages from the second account.
+
+| Interaction | What to do | Expected result |
+| --- | --- | --- |
+| Issue a command | Send `启动 2 号机` (start unit 2). Quote the bot's proposal and reply `确认` (confirm). | The bot creates a pending operation, then reports the simulated result after confirmation. |
+| Review a strategy | With unit 2 stopped, type `strategy` in the **running process terminal**. In WhatsApp, quote the proposal and ask `为什么` (why), then quote the proposal again and send `改成 3 号机` (change to unit 3). | The bot explains the recorded rationale and issues a replacement proposal. Quote the replacement to confirm it. |
+| Query the plant | Send `查询 2 号机` (check unit 2) or `报告` (report). | A unit query returns its simulated state and sample time. A report returns both unit states and the cumulative command count. |
+
+Use `暂缓` to hold a proposal or `拒绝` to reject it. To confirm without quoting, send `确认 Sxxxxxxxx`, replacing the placeholder with the operation ID from the bot. To stop a running unit, send a command such as `停止 2 号机` and confirm the resulting proposal.
+
+## Project modules
+
+| Location | Responsibility |
+| --- | --- |
+| [src/whatsapp.js](src/whatsapp.js) | QR login, group selection, sender identification, quoted replies, and strategy delivery |
+| [src/plant.js](src/plant.js) | Phrase matching, approval state, duplicate-message handling, simulated commands, and telemetry |
+| [src/demo.js](src/demo.js) | Local replay using the same plant logic as the WhatsApp adapter |
+| [test/plant.test.js](test/plant.test.js) | Checks for ambiguous confirmations, revisions, operator permissions, duplicate delivery, and state readback |
+| [docs/design](docs/design) and [docs/reference](docs/reference) | Interaction flowchart and original project materials |
+
+## Persistence and integration scope
+
+Group mode persists simulated plant records in a per-group SQLite database under `data/`. The WhatsApp session persists under `.wwebjs_auth/`. Restart the process after a disconnect. Offline message recovery and failed-send retries are not implemented.
+
+The simulator updates its own telemetry when it accepts a command. Live equipment control, InfluxDB readback, and open-ended language understanding are future integration points.
+
+## Upstream references
+
+The WhatsApp adapter uses the client, local authentication, and message events from [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js). The approval flow draws on [LangGraph's human-review examples](https://docs.langchain.com/oss/python/langgraph/interrupts) and stores pending operations directly in SQLite.
