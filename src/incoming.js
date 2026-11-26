@@ -15,10 +15,10 @@ function isDirectInput(text) {
   return /^(查询|状态|启动|开启|关闭|停止)\s*[23]\s*号机$/u.test(text);
 }
 
-export async function handleIncoming(m,{plant,group,solo,selfIds,operators,aiEnabled,clarify,interpret,sendGroup,deliver,sendModePoll}){
+export async function handleIncoming(m,{plant,group,solo,selfIds,operators,aiEnabled,clarify,interpret,sendGroup,deliver,sendModePoll,isOutgoing}){
   if(!plant || m.type!=='chat') return;
   if(solo){
-    if(!m.fromMe || (m.id.remote!==group && m.to!==group) || m.body.startsWith('助手｜')) return;
+    if(!m.fromMe || (m.id.remote!==group && m.to!==group) || await isOutgoing?.(m.id._serialized)) return;
   }else if(m.fromMe || m.from!==group) return;
   try{
     let text=solo?m.body.trim().replace(/^[/／]test\s+/iu,''):addressedText(m.body,m.mentionedIds || [],selfIds);

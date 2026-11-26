@@ -1,3 +1,4 @@
+import {createGroupMessages} from './group-messages.js';
 import {authDirectory, dataDirectory, groupDatabasePath} from './storage.js';
 import {createClarifier} from './clarify.js';
 import {deliverReply,flushReplies} from './outbox.js';
@@ -62,35 +63,63 @@ client.on('ready',async()=>{
     }catch{console.warn('仅使用当前账号标识匹配提及');}
   }
   plant=createPlant(groupDatabasePath(group));
-  clarify=createClarifier(interpret,(sender,request)=>sendGroup(
+  clarify=createClarifier(interpret,(sender,request,quotedMessageId)=>sendGroup(
   '@'+sender.split('@')[0]+' 你是想让我处理「'+request+'」吗？请在 5 分钟内引用本条回复「需要」或「不用」。',
-  {mentions:[sender]}),plant.clarifications);
-  if(solo) plant.restoreFirstSoloModeVote();
+  {mentions:[sender],quotedMessageId}),plant.clarifications);
+  if(solo){
+    plant.restoreFirstSoloModeVote();
+    await client.pupPage.exposeFunction('onSoloGroupText',data=>onChat(new wa.Message(client,data)));
+    await client.pupPage.evaluate(target=>{
+      const forward=msg=>{
+        if(msg.isNewMsg && msg.type==='chat' && msg.id.fromMe && msg.id.remote.toString()===target)
+          void window.onSoloGroupText(window.WWebJS.getMessageModel(msg));
+      };
+      const {Msg}=window.require('WAWebCollections');
+      Msg.on('add',forward);
+      Msg.on('add',msg=>{
+        if(msg.isNewMsg && msg.type==='ciphertext') msg.once('change:type',()=>forward(msg));
+      });
+    },group);
+  }
   void reconcilePolls();
   console.log('已连接测试群。终端输入 strategy 推送模拟策略。');
   createInterface({input:process.stdin}).on('line',async line=>{
     if(solo && line.trim()==='mode-poll') try {await sendModePoll();}catch(e){console.error(e.message);}
-    if(line.trim()==='strategy') try {await deliver(plant.strategy());}catch(e){console.error(e.message);}
+    if(line.trim()==='strategy') try {await deliver(plant.strategy(),sendStrategy);}catch(e){console.error(e.message);}
   });
 });
 const solo=process.env.WA_SELF_TEST==='1';
-function sendGroup(content,options){
-  const body=solo && typeof content==='string'?'助手｜'+content:content;
-  return client.sendMessage(group,body,options);
+const messages=createGroupMessages((content,options)=>client.sendMessage(group,content,options),()=>plant);
+const sendGroup=messages.send;
+function sendStrategy(content){
+  return sendGroup(typeof content==='string'?'*冷站策略建议*\n'+content:content);
 }
-client.on(solo?'message_create':'message',m=>handleIncoming(m,{
-  plant,group,solo,selfIds,operators,aiEnabled:Boolean(process.env.DEEPSEEK_API_KEY),
-  clarify,interpret,sendGroup,deliver,sendModePoll
-}));
-async function sendModePoll(){
+if(!solo) client.on('message',onChat);
+function onChat(m){
+  const reply=async(content,options)=>{
+    // A new outgoing message from the same account is quotable after server acknowledgement.
+    if(solo && m.fromMe && !(m.ack>0)){
+      await client.pupPage.waitForFunction(id=>
+        window.require('WAWebCollections').Msg.get(id)?.ack>0,
+        {timeout:15000},m.id._serialized);
+    }
+    return sendGroup(content,{...options,quotedMessageId:m.id._serialized,ignoreQuoteErrors:false});
+  };
+  return handleIncoming(m,{
+    plant,group,solo,selfIds,operators,aiEnabled:Boolean(process.env.DEEPSEEK_API_KEY),
+    clarify,interpret,isOutgoing:messages.isOutgoing,sendGroup:reply,
+    deliver:body=>deliver(body,reply,m.id._serialized),sendModePoll:()=>sendModePoll(reply)
+  });
+}
+async function sendModePoll(send=sendGroup){
       const {mode,revision}=plant.setting();
-      const sent=await sendGroup(new wa.Poll('切换模拟策略模式（当前：'+mode+'）',MODES,{allowMultipleAnswers:false}));
+      const sent=await send(new wa.Poll('切换模拟策略模式（当前：'+mode+'）',MODES,{allowMultipleAnswers:false}));
       plant.bindModePoll(sent.id._serialized,revision);
   console.log('模式投票已发送并绑定');
 }
-async function deliver(reply){
-  return deliverReply(plant,reply,sendGroup,(title,options)=>
-    new wa.Poll(title,options,{allowMultipleAnswers:false}));
+async function deliver(reply,send=sendGroup,quotedMessageId){
+  return deliverReply(plant,reply,send,(title,options)=>
+    new wa.Poll(title,options,{allowMultipleAnswers:false}),quotedMessageId);
 }
 
 // Read the current selection rather than accepting a delayed vote event.
@@ -126,7 +155,11 @@ async function reconcilePolls(){
       }
     }
   }catch(e){console.error('读取当前投票失败',String(e));}
-  await flushReplies(plant, (body,id)=>id.startsWith('strategy:')?deliver(body):sendGroup(body));
+  await flushReplies(plant,(body,id)=>{
+    if(id.startsWith('strategy:')) return deliver(body,sendStrategy);
+    const quote=id.match(/^(?:poll|mode|expired-mode|delivery:[^:]+):(.+)$/)?.[1];
+    return sendGroup(body,quote?{quotedMessageId:quote}:undefined);
+  });
   setTimeout(reconcilePolls,5000);
 }
 let stopping=false;

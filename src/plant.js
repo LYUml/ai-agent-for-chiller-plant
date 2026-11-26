@@ -158,7 +158,11 @@ export function createPlant(path = ':memory:') {
     if(op.status==='待确认' && op.expires*1000<=Date.now()) return '已过期';
     return op.status;
   }
-  return {strategy,submitStrategy,setting,clarifications,proposalState,
+  db.exec("CREATE TABLE IF NOT EXISTS outgoing_messages(id TEXT PRIMARY KEY)");
+  return {
+    rememberOutgoing(id){run("INSERT OR IGNORE INTO outgoing_messages VALUES(?)",id);},
+    isOutgoing(id){return Boolean(get("SELECT 1 FROM outgoing_messages WHERE id=?",id));},
+    strategy,submitStrategy,setting,clarifications,proposalState,
     restoreFirstSoloModeVote(){
       const state=setting();
       const records=db.prepare("SELECT substr(id,6) AS message FROM messages WHERE id LIKE 'mode:%'").all();
@@ -174,8 +178,8 @@ export function createPlant(path = ':memory:') {
         db.exec('COMMIT');
       }catch(error){db.exec('ROLLBACK');throw error;}
     },
-    queueReply(body){
-      run('INSERT INTO outbox VALUES(?,?)','delivery:'+randomUUID(),body);
+    queueReply(body,quote){
+      run('INSERT INTO outbox VALUES(?,?)','delivery:'+randomUUID()+(quote?':'+quote:''),body);
     },
     pendingReplies(){return db.prepare('SELECT id, body FROM outbox ORDER BY rowid').all();},
     markReplySent(id){run('DELETE FROM outbox WHERE id=?',id);},

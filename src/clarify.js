@@ -31,7 +31,7 @@ export function createClarifier(interpret, ask, store) {
         return null;
       }
       entry.request = request;
-      const sent = await ask(sender,request);
+      const sent = await ask(sender,request,m.id?._serialized);
       entry.prompt = sent.id._serialized;
       store?.save(sender,entry);
     } catch(error) {
