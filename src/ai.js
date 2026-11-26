@@ -31,6 +31,7 @@ export async function classify(text) {
 
 export async function interpret(text) {
   const {intent,unit}=await classify(text);
+  if(intent==='need' || intent==='feedback') return {intent,unit,original:text};
   if(intent==='why') return '为什么';
   if(intent==='report') return '报告';
   const verb=new Map([['status','查询'],['start','启动'],['stop','停止']]).get(intent);

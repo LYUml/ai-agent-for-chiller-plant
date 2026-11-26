@@ -43,6 +43,7 @@ Use `暂缓` to hold a proposal or `拒绝` to reject it. To confirm without quo
 | Location | Responsibility |
 | --- | --- |
 | [src/whatsapp.js](src/whatsapp.js) | QR login, group selection, sender identification, quoted replies, and strategy delivery |
+| [src/incoming.js](src/incoming.js) | Shared chat handler used by WhatsApp and the offline group-message replay |
 | [src/plant.js](src/plant.js) | Phrase matching, approval state, duplicate-message handling, simulated commands, and telemetry |
 | [src/demo.js](src/demo.js) | Local replay using the same plant logic as the WhatsApp adapter |
 | [test/plant.test.js](test/plant.test.js) | Checks for ambiguous confirmations, revisions, operator permissions, duplicate delivery, and state readback |
@@ -50,7 +51,7 @@ Use `暂缓` to hold a proposal or `拒绝` to reject it. To confirm without quo
 
 ## Persistence and integration scope
 
-Group mode persists simulated plant records in a per-group SQLite database under `data/`. The WhatsApp session persists under `.wwebjs_auth/`. Restart the process after a disconnect. Poll decisions and their outgoing acknowledgements are stored together so an interrupted acknowledgement can be retried. Offline chat messages are not replayed.
+Group mode persists simulated plant records in a per-group SQLite database under `data/`. The WhatsApp session persists under `.wwebjs_auth/`. Session and database paths resolve from the project location. A sender can answer a pending clarification within five minutes even after a restart. Restart the process after a disconnect. Poll decisions and their outgoing acknowledgements are stored together so an interrupted acknowledgement can be retried. A crash after delivery but before acknowledgement bookkeeping can repeat a receipt. Command execution is deduplicated by operation. Offline chat messages are not replayed.
 
 The simulator updates its own telemetry when it accepts a command. Live equipment control and InfluxDB readback are future integration points.
 

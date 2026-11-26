@@ -8,4 +8,6 @@ test('only a native mention of this account admits group text',()=>{
   assert.equal(addressedText('@200 查询 2 号机',['200@lid'],self),'查询 2 号机');
   assert.equal(addressedText('查询 2 号机 @100',['100@c.us'],self),'查询 2 号机');
   assert.equal(addressedText('@200',['200@lid'],self),'');
+  assert.equal(addressedText('查询 2 号机@100',['200@lid'],self),'查询 2 号机');
+  assert.equal(addressedText('@300 @100 查询',['300@lid','200@lid'],self),'@300  查询');
 });

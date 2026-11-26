@@ -28,11 +28,13 @@ export function createPlant(path = ':memory:') {
   }
   db.exec("CREATE TABLE IF NOT EXISTS mode_setting(id INTEGER PRIMARY KEY, mode TEXT, revision INTEGER); INSERT OR IGNORE INTO mode_setting VALUES(1,'手动批准',0); CREATE TABLE IF NOT EXISTS mode_poll(message TEXT PRIMARY KEY, revision INTEGER, expires INTEGER)");
   const setting=()=>get('SELECT mode,revision FROM mode_setting WHERE id=1');
-  function strategy(unit=2) {
+  function strategy(unit=2, messageId) {
     if(![2,3].includes(unit)) throw Error('Unsupported simulated unit');
     db.exec('BEGIN IMMEDIATE');
     try {
-      const result=newStrategy(unit);
+      const fresh = messageId === undefined ||
+        run('INSERT OR IGNORE INTO messages VALUES(?)',messageId).changes === 1;
+      const result = fresh ? newStrategy(unit) : null;
       db.exec('COMMIT');
       return result;
     }catch(error){db.exec('ROLLBACK');throw error;}
@@ -47,7 +49,17 @@ export function createPlant(path = ':memory:') {
     return '模拟策略（'+mode+'）：'+route({text:'确认 '+id,operator:true});
 
   }
-  function route({text,quoted='',operator=false}) {
+  function route({id,text,observation,quoted='',operator=false}) {
+    if(observation?.intent==='need'){
+      return '当前模拟后台没有实时负荷和可用容量数据，无法判断是否需要加机。可以查询机组状态或引用一条策略查看当次依据。';
+    }
+    if(observation?.intent==='feedback'){
+      run('INSERT INTO feedback VALUES(?,?)',id,text+' '+quoted);
+      const point=get('SELECT running,sampled FROM points WHERE unit=?',observation.unit);
+      return point
+        ? '已记录现场反馈。模拟点位显示 '+observation.unit+' 号机'+(point.running?'运行':'停机')+'，采样时间 '+point.sampled+' UTC。'
+        : '已记录现场反馈。当前没有对应设备的模拟点位可供核对。';
+    }
     const t=text.trim();
     const request=modeRequest(t);
     if(request==='show') return '当前策略模式：'+setting().mode;
@@ -84,6 +96,11 @@ export function createPlant(path = ':memory:') {
     const p=get('SELECT * FROM points WHERE unit=?',op.unit);
     if(body.startsWith('已经手动')) {status('暂缓');return '已暂缓并记录现场反馈；模拟点位显示'+(p.running?'运行':'停机')+'，请核对。';}
     if(body!=='确认') return '请明确回复「确认 '+op.id+'」、拒绝、暂缓或改成 3 号机。';
+    // A confirmed target supersedes earlier conflicting proposals, even when
+    // the unit already has the requested state. A draft alone changes nothing.
+    run(`UPDATE ops SET status='已被后续确认取代'
+         WHERE unit=? AND action<>? AND status IN ('待确认','暂缓')
+           AND rowid < (SELECT rowid FROM ops WHERE id=?)`, op.unit, op.action, op.id);
     const target=Number(op.action==='启动');
     if(p.running===target) {status('已达目标');return '模拟点位已达目标，无需发令。';}
     run('INSERT INTO commands VALUES(?,CURRENT_TIMESTAMP)',op.id);
@@ -95,7 +112,20 @@ export function createPlant(path = ':memory:') {
   db.exec('CREATE TABLE IF NOT EXISTS polls(message TEXT PRIMARY KEY, op TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY, body TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS decided_poll(message TEXT PRIMARY KEY, voter TEXT, accepted TEXT, seen TEXT, decided INTEGER)');
-  return {strategy,setting,
+  db.exec('CREATE TABLE IF NOT EXISTS clarifications(sender TEXT PRIMARY KEY, prompt TEXT, request TEXT, until INTEGER)');
+  const clarifications={
+    read(){
+      run('DELETE FROM clarifications WHERE until<=?',Date.now());
+      return db.prepare('SELECT * FROM clarifications').all();
+    },
+    save(sender,entry){
+      run('INSERT OR REPLACE INTO clarifications VALUES(?,?,?,?)',sender,entry.prompt,entry.request,entry.until);
+    },
+    remove(sender,prompt){
+      return run('DELETE FROM clarifications WHERE sender=? AND prompt=?',sender,prompt).changes===1;
+    }
+  };
+  return {strategy,setting,clarifications,
     restoreFirstSoloModeVote(){
       const state=setting();
       const records=db.prepare("SELECT substr(id,6) AS message FROM messages WHERE id LIKE 'mode:%'").all();
@@ -110,6 +140,9 @@ export function createPlant(path = ':memory:') {
         run('DELETE FROM mode_poll WHERE expires<=unixepoch()');
         db.exec('COMMIT');
       }catch(error){db.exec('ROLLBACK');throw error;}
+    },
+    queueReply(body){
+      run('INSERT INTO outbox VALUES(?,?)','delivery:'+randomUUID(),body);
     },
     pendingReplies(){return db.prepare('SELECT id, body FROM outbox ORDER BY rowid').all();},
     markReplySent(id){run('DELETE FROM outbox WHERE id=?',id);},
@@ -145,7 +178,7 @@ export function createPlant(path = ':memory:') {
     try {
       const fresh=run('INSERT OR IGNORE INTO messages VALUES(?)',m.id).changes;
       const reply=fresh?route(m):null;
-      if(fresh && m.text.startsWith('已经手动')) run('INSERT INTO feedback VALUES(?,?)',m.id,m.text+' '+(m.quoted||''));
+      if(fresh && !m.observation && m.text.startsWith('已经手动')) run('INSERT INTO feedback VALUES(?,?)',m.id,m.text+' '+(m.quoted||''));
       if(reply && decision) run('INSERT INTO decided_poll VALUES(?,?,?,?,unixepoch())',decision.message,decision.voter,decision.choice,decision.choice);
       if(reply && replyPrefix!==undefined) run('INSERT INTO outbox VALUES(?,?)',m.id,replyPrefix+reply);
       db.exec('COMMIT');return reply;

@@ -99,3 +99,29 @@ test('已处理的模式改票只通知一次，允许新一轮修改',()=>{
   p.vote('second','完全权限','self');
   assert.equal(p.setting().mode,'完全权限');
 });
+
+test('较新的停机确认可关闭旧启动待办，即使设备原本已停机',()=>{
+  const p=createPlant();
+  let seq=0;
+  const send=(text,quoted='')=>p.handle({id:String(++seq),operator:true,text,quoted});
+  const start=send('启动 2 号机');
+  const other=send('启动 3 号机');
+  const stop=send('停止 2 号机');
+  assert.match(send('确认',stop),/已达目标/);
+  assert.match(send('确认',start),/后续确认取代/);
+  assert.match(send('报告'),/命令 0 条/);
+  assert.match(send('确认',other),/模拟后台已接收/);
+});
+
+test('投票发送失败可使用原编号确认，回执重送不重复发令',async()=>{
+  const {deliverReply,flushReplies}=await import('../src/outbox.js');
+  const p=createPlant(), proposal=p.strategy(), id=proposal.match(/S[0-9a-f]{8}/)[0];
+  await deliverReply(p,proposal,async value=>{if(typeof value!=='string')throw Error('offline');},()=>({poll:true}));
+  const recovered=[];
+  await flushReplies(p,async body=>recovered.push(body));
+  assert.match(recovered[0],new RegExp('确认 '+id));
+  const confirm=()=>p.handle({id:'same',text:'确认 '+id,operator:true});
+  assert.match(confirm(),/模拟后台已接收/);
+  assert.equal(confirm(),null);
+  assert.match(p.handle({id:'stats',text:'报告'}),/命令 1 条/);
+});
